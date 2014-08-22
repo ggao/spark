@@ -19,7 +19,7 @@ package org.apache.spark.deploy.yarn
 
 import java.nio.ByteBuffer
 
-import org.apache.spark.deploy.yarn.{YarnAppResource, YarnResourceCapacity}
+import org.apache.spark.deploy.yarn._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.io.DataOutputBuffer
 import org.apache.hadoop.yarn.api.protocolrecords._
@@ -152,29 +152,46 @@ class Client( hadoopConf: Configuration)
 
   def stop = yarnClient.stop
 
+
+
+  protected def getAppProgress(report: ApplicationReport): YarnAppProgress = {
+
+    val appUsageReport = report.getApplicationResourceUsageReport
+    YarnAppProgress(report.getApplicationId.getId,
+      getResourceUsage(appUsageReport),
+      report.getProgress)
+  }
+
+
+
   def monitorApplication(appId: ApplicationId, sparkConf: SparkConf): Boolean = {
     val interval = sparkConf.getLong("spark.yarn.report.interval", 1000)
+
+    val initReport = yarnClient.getApplicationReport(appId)
+    notifyAppStart(initReport)
 
     while (true) {
       Thread.sleep(interval)
       val report = yarnClient.getApplicationReport(appId)
 
-      logInfo("Application report from ResourceManager: \n" +
-        "\t application identifier: " + appId.toString() + "\n" +
-        "\t appId: " + appId.getId() + "\n" +
-        "\t clientToAMToken: " + report.getClientToAMToken() + "\n" +
-        "\t appDiagnostics: " + report.getDiagnostics() + "\n" +
-        "\t appMasterHost: " + report.getHost() + "\n" +
-        "\t appQueue: " + report.getQueue() + "\n" +
-        "\t appMasterRpcPort: " + report.getRpcPort() + "\n" +
-        "\t appStartTime: " + report.getStartTime() + "\n" +
-        "\t yarnAppState: " + report.getYarnApplicationState() + "\n" +
-        "\t distributedFinalState: " + report.getFinalApplicationStatus() + "\n" +
-        "\t appTrackingUrl: " + report.getTrackingUrl() + "\n" +
-        "\t appUser: " + report.getUser()
-      )
-
       val state = report.getYarnApplicationState()
+
+      logProgress(appId, report)
+
+      state match {
+        case YarnApplicationState.RUNNING =>
+          notifyAppProgress(report)
+        case YarnApplicationState.FINISHED =>
+          notifyAppFinished(report)
+        case YarnApplicationState.FAILED =>
+          notifyAppFailed(report)
+        case YarnApplicationState.KILLED =>
+          notifyAppKilled(report)
+        case _ =>
+          notifyAppProgress(report)
+      }
+
+
       if (state == YarnApplicationState.FINISHED ||
         state == YarnApplicationState.FAILED ||
         state == YarnApplicationState.KILLED) {
@@ -183,6 +200,25 @@ class Client( hadoopConf: Configuration)
     }
     true
   }
+
+  private def logProgress(appId: ApplicationId, report: ApplicationReport) {
+    logInfo("Application report from ResourceManager: \n" +
+      "\t application identifier: " + appId.toString() + "\n" +
+      "\t appId: " + appId.getId() + "\n" +
+      "\t clientToAMToken: " + report.getClientToAMToken() + "\n" +
+      "\t appDiagnostics: " + report.getDiagnostics() + "\n" +
+      "\t appMasterHost: " + report.getHost() + "\n" +
+      "\t appQueue: " + report.getQueue() + "\n" +
+      "\t appMasterRpcPort: " + report.getRpcPort() + "\n" +
+      "\t appStartTime: " + report.getStartTime() + "\n" +
+      "\t yarnAppState: " + report.getYarnApplicationState() + "\n" +
+      "\t distributedFinalState: " + report.getFinalApplicationStatus() + "\n" +
+      "\t appTrackingUrl: " + report.getTrackingUrl() + "\n" +
+      "\t appUser: " + report.getUser()
+    )
+  }
+
+
 }
 
 object Client {

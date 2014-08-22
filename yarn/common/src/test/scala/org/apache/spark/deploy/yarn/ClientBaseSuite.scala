@@ -24,6 +24,8 @@ import com.google.common.io.Files
 import org.apache.spark.deploy.yarn.YarnResourceCapacity
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+import org.apache.hadoop.mapreduce.MRJobConfig
+import org.apache.hadoop.yarn.conf.YarnConfiguration
 import org.apache.hadoop.yarn.api.ApplicationConstants.Environment
 import org.apache.hadoop.yarn.api.protocolrecords.GetNewApplicationResponse
 import org.apache.hadoop.yarn.api.records.{ApplicationReport, ApplicationId, ContainerLaunchContext}

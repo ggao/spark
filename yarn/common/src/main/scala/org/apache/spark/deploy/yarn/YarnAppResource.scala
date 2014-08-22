@@ -14,11 +14,6 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 */
-
-/**
- *  Yarn Application Resource
- *
- */
 package org.apache.spark.deploy.yarn
 
 case class YarnAppResource(memory: Int, virtualCores: Int)
