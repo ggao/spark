@@ -19,13 +19,13 @@ package org.apache.spark.deploy.yarn
 
 import scala.collection.mutable.{ArrayBuffer, HashMap}
 
-import org.apache.spark.SparkConf
+import org.apache.spark.{Logging, SparkConf}
 import org.apache.spark.scheduler.InputFormatInfo
 import org.apache.spark.util.{Utils, IntParam, MemoryParam}
 
 
 // TODO: Add code and support for ensuring that yarn resource 'tasks' are location aware !
-class ClientArguments(val args: Array[String], val sparkConf: SparkConf) {
+class ClientArguments(val args: Array[String], val sparkConf: SparkConf) extends Logging {
   var addJars: String = null
   var files: String = null
   var archives: String = null
@@ -41,8 +41,12 @@ class ClientArguments(val args: Array[String], val sparkConf: SparkConf) {
   var appName: String = "Spark"
   var inputFormatInfo: List[InputFormatInfo] = null
   var priority = 0
+  var memoryOverhead = 0
 
   parseArgs(args.toList)
+
+
+
 
   // env variable SPARK_YARN_DIST_ARCHIVES/SPARK_YARN_DIST_FILES set in yarn-client then
   // it should default to hdfs://
@@ -146,6 +150,7 @@ class ClientArguments(val args: Array[String], val sparkConf: SparkConf) {
 
     userArgs = userArgsBuffer.readOnly
     inputFormatInfo = inputFormatMap.values.toList
+    memoryOverhead = getMemoryOverhead(sparkConf)
   }
 
 
@@ -169,4 +174,31 @@ class ClientArguments(val args: Array[String], val sparkConf: SparkConf) {
       "  --files files              Comma separated list of files to be distributed with the job.\n" +
       "  --archives archives        Comma separated list of archives to be distributed with the job."
   }
+
+  // TODO(harvey): This could just go in ClientArguments.
+  def validateArgs() = {
+
+    Map(
+      ((userJar == null && amClass == classOf[ApplicationMaster].getName) ->
+        "Error: You must specify a user jar when running in standalone mode!"),
+      (userClass == null) -> "Error: You must specify a user class!",
+      (numExecutors <= 0) -> "Error: You must specify at least 1 executor!",
+      (amMemory <= memoryOverhead) -> ("Error: AM memory size must be" +
+        "greater than: " + memoryOverhead),
+      (executorMemory <= memoryOverhead) -> ("Error: Executor memory size" +
+        "must be greater than: " + memoryOverhead.toString)
+    ).foreach { case(cond, errStr) =>
+      if (cond) {
+        logError(errStr)
+        throw new IllegalArgumentException(getUsageMessage())
+      }
+    }
+  }
+
+
+  // Additional memory overhead - in mb.
+  private def getMemoryOverhead(sparkConf: SparkConf): Int =
+    sparkConf.getInt("spark.yarn.driver.memoryOverhead", YarnAllocationHandler.MEMORY_OVERHEAD)
+
+
 }
