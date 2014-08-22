@@ -413,6 +413,93 @@ trait ClientBase extends Logging {
     amContainer.setApplicationACLs(acls)
     amContainer
   }
+
+
+  protected val listeners = ListBuffer[YarnApplicationListener]()
+
+  def addApplicationListener(listener: YarnApplicationListener) {
+    listeners += listener
+  }
+
+
+  def getApplicationInfo(report: ApplicationReport): YarnAppInfo = {
+    import scala.collection.JavaConverters._
+    YarnAppInfo(report.getApplicationId.getId,
+      report.getUser,
+      report.getQueue,
+      report.getName,
+      report.getHost,
+      report.getRpcPort,
+      report.getYarnApplicationState.name(),
+      report.getDiagnostics,
+      report.getTrackingUrl,
+      report.getStartTime)
+
+  }
+
+  protected def notifyAppStart(report: ApplicationReport) {
+    val appInfo: YarnAppInfo = getApplicationInfo(report)
+    for (l <- listeners) {
+      //async {
+      l.onApplicationStart(appInfo.startTime, appInfo)
+      //}
+    }
+  }
+
+
+  protected def notifyAppFailed(report: ApplicationReport) {
+    val appProgress: YarnAppProgress = getAppProgress(report)
+    for (l <- listeners) {
+      //async {
+      l.onApplicationFailed(new Date().getTime, appProgress)
+      //}
+    }
+  }
+
+  protected def notifyAppKilled(report: ApplicationReport) {
+    val appProgress: YarnAppProgress = getAppProgress(report)
+    for (l <- listeners) {
+      //async {
+      l.onApplicationKilled(new Date().getTime, appProgress)
+      //}
+    }
+  }
+
+
+
+
+  protected def getResourceUsage(report: ApplicationResourceUsageReport): YarnResourceUsage = {
+
+    def getYarnAppResource(res: Resource) = YarnAppResource(res.getMemory, res.getVirtualCores)
+
+    YarnResourceUsage(report.getNumUsedContainers,
+      report.getNumReservedContainers,
+      getYarnAppResource(report.getUsedResources),
+      getYarnAppResource(report.getReservedResources),
+      getYarnAppResource(report.getNeededResources))
+  }
+
+  protected def getAppProgress(report: ApplicationReport): YarnAppProgress
+
+  protected def notifyAppProgress(report: ApplicationReport) {
+    val appProgress: YarnAppProgress = getAppProgress(report)
+    for (l <- listeners) {
+      //async {
+      l.onApplicationProgress(new Date().getTime, appProgress)
+      //}
+    }
+  }
+
+  protected def notifyAppFinished(report: ApplicationReport) {
+    val appProgress: YarnAppProgress = getAppProgress(report)
+    for (l <- listeners) {
+      //async {
+      l.onApplicationEnd(new Date().getTime, appProgress)
+      //}
+    }
+  }
+
+
 }
 
 object ClientBase extends Logging {

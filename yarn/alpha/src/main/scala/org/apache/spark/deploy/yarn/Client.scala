@@ -29,49 +29,50 @@ import org.apache.hadoop.yarn.api.records._
 import org.apache.hadoop.yarn.client.YarnClientImpl
 import org.apache.hadoop.yarn.conf.YarnConfiguration
 import org.apache.hadoop.yarn.ipc.YarnRPC
-import org.apache.hadoop.yarn.util.{Apps, Records}
+import org.apache.hadoop.yarn.util.{Records, Apps}
+import org.apache.spark.deploy.yarn.{YarnAppProgress, ClientArguments, YarnResourceCapacity, ClientBase}
 
-import org.apache.spark.{Logging, SparkConf}
+import org.apache.spark.{SparkConf, Logging}
 
 /**
  * Version of [[org.apache.spark.deploy.yarn.ClientBase]] tailored to YARN's alpha API.
  */
-class Client(clientArgs: ClientArguments, hadoopConf: Configuration, spConf: SparkConf)
+class Client( hadoopConf: Configuration)
   extends YarnClientImpl with ClientBase with Logging {
 
-  def this(clientArgs: ClientArguments, spConf: SparkConf) =
-    this(clientArgs, new Configuration(), spConf)
-
-  def this(clientArgs: ClientArguments) = this(clientArgs, new SparkConf())
-
-  val args = clientArgs
+  def this() = this(new Configuration())
   val conf = hadoopConf
-  val sparkConf = spConf
   var rpc: YarnRPC = YarnRPC.create(conf)
   val yarnConf: YarnConfiguration = new YarnConfiguration(conf)
 
-
-  // for client user who want to monitor app status by itself.
-  def runApp() = {
-    validateArgs()
-
+  def createYarnApplication() : GetNewApplicationResponse = {
     init(yarnConf)
     start()
-    logClusterResourceDetails()
+    val newApp = super.getNewApplication
+    newApp
+  }
 
-    val newApp = super.getNewApplication()
-    val appId = newApp.getApplicationId()
+  def run(f: YarnResourceCapacity => ClientArguments) {
+    val (appId, args) = runApp(f)
+    monitorApplication(appId, args.sparkConf)
+  }
 
-    verifyClusterResources(newApp)
-    val appContext = createApplicationSubmissionContext(appId)
+  def runApp(f: YarnResourceCapacity => ClientArguments) : (ApplicationId, ClientArguments) = {
+    val newApp = createYarnApplication
+    val appId = newApp.getApplicationId
+    val args = f(getClusterResourceCapacity(newApp))
+    logClusterResourceDetails(args)
+
+    verifyClusterResources(args,newApp)
+    val appContext = createApplicationSubmissionContext(args,appId)
     val appStagingDir = getAppStagingDir(appId)
-    val localResources = prepareLocalResources(appStagingDir)
-    val env = setupLaunchEnv(localResources, appStagingDir)
-    val amContainer = createContainerLaunchContext(newApp, localResources, env)
+    val localResources = prepareLocalResources(args,appStagingDir)
+    val env = setupLaunchEnv(args,localResources, appStagingDir)
+    val amContainer = createContainerLaunchContext(args,newApp, localResources, env)
 
     val capability = Records.newRecord(classOf[Resource]).asInstanceOf[Resource]
     // Memory for the ApplicationMaster.
-    capability.setMemory(args.amMemory + memoryOverhead)
+    capability.setMemory(args.amMemory + args.memoryOverhead)
     amContainer.setResource(capability)
 
     appContext.setQueue(args.amQueue)
@@ -79,15 +80,19 @@ class Client(clientArgs: ClientArguments, hadoopConf: Configuration, spConf: Spa
     appContext.setUser(UserGroupInformation.getCurrentUser().getShortUserName())
 
     submitApp(appContext)
-    appId
+    (appId, args)
   }
 
-  def run() {
-    val appId = runApp()
-    monitorApplication(appId)
+  override
+  protected def getAppProgress(report: ApplicationReport): YarnAppProgress = {
+
+    val appUsageReport = report.getApplicationResourceUsageReport
+    YarnAppProgress(report.getApplicationId.getId,
+      getResourceUsage(appUsageReport))
   }
 
-  def logClusterResourceDetails() {
+
+  def logClusterResourceDetails(args: ClientArguments) {
     val clusterMetrics: YarnClusterMetrics = super.getYarnClusterMetrics
     logInfo("Got Cluster metric info from ASM, numNodeManagers = " +
       clusterMetrics.getNumNodeManagers)
@@ -103,7 +108,7 @@ class Client(clientArgs: ClientArguments, hadoopConf: Configuration, spConf: Spa
   }
 
 
-  def createApplicationSubmissionContext(appId: ApplicationId): ApplicationSubmissionContext = {
+  def createApplicationSubmissionContext(args: ClientArguments,appId: ApplicationId): ApplicationSubmissionContext = {
     logInfo("Setting up application submission context for ASM")
     val appContext = Records.newRecord(classOf[ApplicationSubmissionContext])
     appContext.setApplicationId(appId)
@@ -111,11 +116,10 @@ class Client(clientArgs: ClientArguments, hadoopConf: Configuration, spConf: Spa
     appContext
   }
 
-  def calculateAMMemory(newApp: GetNewApplicationResponse): Int = {
+  def calculateAMMemory(args: ClientArguments,newApp: GetNewApplicationResponse): Int = {
     val minResMemory = newApp.getMinimumResourceCapability().getMemory()
     val amMemory = ((args.amMemory / minResMemory) * minResMemory) +
-          ((if ((args.amMemory % minResMemory) == 0) 0 else minResMemory) -
-          memoryOverhead)
+      ((if ((args.amMemory % minResMemory) == 0) 0 else minResMemory) - args.memoryOverhead)
     amMemory
   }
 
@@ -132,9 +136,10 @@ class Client(clientArgs: ClientArguments, hadoopConf: Configuration, spConf: Spa
     super.submitApplication(appContext)
   }
 
-  def monitorApplication(appId: ApplicationId): Boolean = {
+  def monitorApplication(appId: ApplicationId, sparkConf: SparkConf): Boolean = {
     val interval = sparkConf.getLong("spark.yarn.report.interval", 1000)
 
+/*
     while (true) {
       Thread.sleep(interval)
       val report = super.getApplicationReport(appId)
@@ -161,8 +166,61 @@ class Client(clientArgs: ClientArguments, hadoopConf: Configuration, spConf: Spa
         return true
       }
     }
+*/
+
+    while (true) {
+      val report = getApplicationReport(appId)
+      notifyAppStart(report)
+
+      Thread.sleep(interval)
+
+      val state = report.getYarnApplicationState()
+      if (state == YarnApplicationState.RUNNING)
+        notifyAppProgress(report)
+
+      logProgress(appId, report)
+
+      state match {
+        case YarnApplicationState.RUNNING =>
+          notifyAppProgress(report)
+        case YarnApplicationState.FINISHED =>
+          notifyAppFinished(report)
+        case YarnApplicationState.FAILED =>
+          notifyAppFailed(report)
+        case YarnApplicationState.KILLED =>
+          notifyAppKilled(report)
+        case _ =>
+          notifyAppProgress(report)
+      }
+
+
+      if (state == YarnApplicationState.FINISHED ||
+        state == YarnApplicationState.FAILED ||
+        state == YarnApplicationState.KILLED) {
+        return true
+      }
+    }
     true
   }
+
+  private def logProgress(appId: ApplicationId, report: ApplicationReport) {
+
+    logInfo("Application report from ASM: \n" +
+      "\t application identifier: " + appId.toString() + "\n" +
+      "\t appId: " + appId.getId() + "\n" +
+      "\t clientToken: " + report.getClientToken() + "\n" +
+      "\t appDiagnostics: " + report.getDiagnostics() + "\n" +
+      "\t appMasterHost: " + report.getHost() + "\n" +
+      "\t appQueue: " + report.getQueue() + "\n" +
+      "\t appMasterRpcPort: " + report.getRpcPort() + "\n" +
+      "\t appStartTime: " + report.getStartTime() + "\n" +
+      "\t yarnAppState: " + report.getYarnApplicationState() + "\n" +
+      "\t distributedFinalState: " + report.getFinalApplicationStatus() + "\n" +
+      "\t appTrackingUrl: " + report.getTrackingUrl() + "\n" +
+      "\t appUser: " + report.getUser()
+    )
+  }
+
 }
 
 object Client {
@@ -180,8 +238,9 @@ object Client {
     val sparkConf = new SparkConf
 
     try {
-      val args = new ClientArguments(argStrings, sparkConf)
-      new Client(args, sparkConf).run()
+      //default implementation ignore yarn capacity
+      def  toArgs (capacity: YarnResourceCapacity) = new ClientArguments(argStrings, sparkConf)
+      new Client().run(toArgs)
     } catch {
       case e: Exception => {
         Console.err.println(e.getMessage)
