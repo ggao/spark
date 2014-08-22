@@ -19,7 +19,7 @@ package org.apache.spark.scheduler.cluster
 
 import org.apache.hadoop.yarn.api.records.{ApplicationId, YarnApplicationState}
 import org.apache.spark.{SparkException, Logging, SparkContext}
-import org.apache.spark.deploy.yarn.{Client, ClientArguments, ExecutorLauncher, YarnSparkHadoopUtil}
+import org.apache.spark.deploy.yarn._
 import org.apache.spark.scheduler.TaskSchedulerImpl
 
 import scala.collection.mutable.ArrayBuffer
@@ -80,13 +80,16 @@ private[spark] class YarnClientSchedulerBackend(
       ("--executor-cores", "SPARK_EXECUTOR_CORES", "spark.executor.cores"),
       ("--queue", "SPARK_YARN_QUEUE", "spark.yarn.queue"),
       ("--name", "SPARK_YARN_APP_NAME", "spark.app.name"))
-    .foreach { case (optName, envVar, sysProp) => addArg(optName, envVar, sysProp, argsArrayBuf) }
+      .foreach { case (optName, envVar, sysProp) => addArg(optName, envVar, sysProp, argsArrayBuf) }
 
     logDebug("ClientArguments called with: " + argsArrayBuf)
-    val args = new ClientArguments(argsArrayBuf.toArray, conf)
+
+    def toArgs (capacity: YarnResourceCapacity) = new ClientArguments(argsArrayBuf.toArray, conf)
+
+    client = new Client(toArgs)
+    val (applicationId, args) = client.runApp()
+    appId = applicationId
     totalExpectedExecutors = args.numExecutors
-    client = new Client(args, conf)
-    appId = client.runApp()
     waitForApp()
     checkerThread = yarnApplicationStateCheckerThread()
   }

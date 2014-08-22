@@ -38,6 +38,7 @@ import org.apache.hadoop.yarn.api.records._
 import org.apache.hadoop.yarn.conf.YarnConfiguration
 import org.apache.hadoop.yarn.util.Records
 import org.apache.spark.{Logging, SecurityManager, SparkConf, SparkContext, SparkException}
+import java.util.Date
 
 /**
  * The entry point (starting in Client#main() and Client#run()) for launching Spark on YARN. The
@@ -50,9 +51,9 @@ import org.apache.spark.{Logging, SecurityManager, SparkConf, SparkContext, Spar
  *      request executors on behalf of a driver running outside of the cluster.
  */
 trait ClientBase extends Logging {
-  val args: ClientArguments
+  // val args: ClientArguments
   val conf: Configuration
-  val sparkConf: SparkConf
+  // val sparkConf: SparkConf
   val yarnConf: YarnConfiguration
   val credentials = UserGroupInformation.getCurrentUser().getCredentials()
   private val SPARK_STAGING: String = ".sparkStaging"
@@ -65,34 +66,11 @@ trait ClientBase extends Logging {
   val APP_FILE_PERMISSION: FsPermission =
     FsPermission.createImmutable(Integer.parseInt("644", 8).toShort)
 
-  // Additional memory overhead - in mb.
-  protected def memoryOverhead: Int = sparkConf.getInt("spark.yarn.driver.memoryOverhead",
-    YarnAllocationHandler.MEMORY_OVERHEAD)
-
-  // TODO(harvey): This could just go in ClientArguments.
-  def validateArgs() = {
-    Map(
-      ((args.userJar == null && args.amClass == classOf[ApplicationMaster].getName) ->
-          "Error: You must specify a user jar when running in standalone mode!"),
-      (args.userClass == null) -> "Error: You must specify a user class!",
-      (args.numExecutors <= 0) -> "Error: You must specify at least 1 executor!",
-      (args.amMemory <= memoryOverhead) -> ("Error: AM memory size must be" +
-        "greater than: " + memoryOverhead),
-      (args.executorMemory <= memoryOverhead) -> ("Error: Executor memory size" +
-        "must be greater than: " + memoryOverhead.toString)
-    ).foreach { case(cond, errStr) =>
-      if (cond) {
-        logError(errStr)
-        throw new IllegalArgumentException(args.getUsageMessage())
-      }
-    }
-  }
-
   def getAppStagingDir(appId: ApplicationId): String = {
     SPARK_STAGING + Path.SEPARATOR + appId.toString() + Path.SEPARATOR
   }
 
-  def verifyClusterResources(app: GetNewApplicationResponse) = {
+  def verifyClusterResources(args: ClientArguments, app: GetNewApplicationResponse) = {
     val maxMem = app.getMaximumResourceCapability().getMemory()
     logInfo("Max mem capabililty of a single resource in this cluster " + maxMem)
 
@@ -105,7 +83,7 @@ trait ClientBase extends Logging {
       logError(errorMessage)
       throw new IllegalArgumentException(errorMessage)
     }
-    val amMem = args.amMemory + memoryOverhead
+    val amMem = args.amMemory + args.memoryOverhead
     if (amMem > maxMem) {
 
       val errorMessage = "Required AM memory (%d) is above the max threshold (%d) of this cluster."
@@ -186,16 +164,16 @@ trait ClientBase extends Logging {
     new Path(qualifiedURI)
   }
 
-  def prepareLocalResources(appStagingDir: String): HashMap[String, LocalResource] = {
+  def prepareLocalResources(args: ClientArguments, appStagingDir: String): HashMap[String, LocalResource] = {
     logInfo("Preparing Local resources")
     // Upload Spark and the application JAR to the remote file system if necessary. Add them as
     // local resources to the application master.
     val fs = FileSystem.get(conf)
     val dst = new Path(fs.getHomeDirectory(), appStagingDir)
-    val nns = ClientBase.getNameNodesToAccess(sparkConf) + dst
+    val nns = ClientBase.getNameNodesToAccess(args.sparkConf) + dst
     ClientBase.obtainTokensForNamenodes(nns, conf, credentials)
 
-    val replication = sparkConf.getInt("spark.yarn.submit.file.replication", 3).toShort
+    val replication = args.sparkConf.getInt("spark.yarn.submit.file.replication", 3).toShort
     val localResources = HashMap[String, LocalResource]()
     FileSystem.mkdirs(fs, dst, new FsPermission(STAGING_DIR_PERMISSION))
 
@@ -210,7 +188,7 @@ trait ClientBase extends Logging {
     }
 
     List(
-      (ClientBase.SPARK_JAR, ClientBase.sparkJar(sparkConf), ClientBase.CONF_SPARK_JAR),
+      (ClientBase.SPARK_JAR, ClientBase.sparkJar(args.sparkConf), ClientBase.CONF_SPARK_JAR),
       (ClientBase.APP_JAR, args.userJar, ClientBase.CONF_SPARK_USER_JAR),
       ("log4j.properties", oldLog4jConf.getOrElse(null), null)
     ).foreach { case(destName, _localPath, confKey) =>
@@ -224,7 +202,7 @@ trait ClientBase extends Logging {
           distCacheMgr.addResource(destFs, conf, destPath, localResources, LocalResourceType.FILE,
             destName, statCache)
         } else if (confKey != null) {
-          sparkConf.set(confKey, localPath)
+          args.sparkConf.set(confKey, localPath)
         }
       }
     }
@@ -253,29 +231,29 @@ trait ClientBase extends Logging {
       }
     }
     logInfo("Prepared Local resources " + localResources)
-    sparkConf.set(ClientBase.CONF_SPARK_YARN_SECONDARY_JARS, cachedSecondaryJarLinks.mkString(","))
+    args.sparkConf.set(ClientBase.CONF_SPARK_YARN_SECONDARY_JARS, cachedSecondaryJarLinks.mkString(","))
 
     UserGroupInformation.getCurrentUser().addCredentials(credentials)
     localResources
   }
 
   /** Get all application master environment variables set on this SparkConf */
-  def getAppMasterEnv: Seq[(String, String)] = {
+  def getAppMasterEnv(sparkConf: SparkConf): Seq[(String, String)] = {
     val prefix = "spark.yarn.appMasterEnv."
     sparkConf.getAll.filter{case (k, v) => k.startsWith(prefix)}
       .map{case (k, v) => (k.substring(prefix.length), v)}
   }
 
 
-  def setupLaunchEnv(
+  def setupLaunchEnv(args: ClientArguments,
       localResources: HashMap[String, LocalResource],
       stagingDir: String): HashMap[String, String] = {
     logInfo("Setting up the launch environment")
 
     val env = new HashMap[String, String]()
 
-    val extraCp = sparkConf.getOption("spark.driver.extraClassPath")
-    ClientBase.populateClasspath(args, yarnConf, sparkConf, env, extraCp)
+    val extraCp = args.sparkConf.getOption("spark.driver.extraClassPath")
+    ClientBase.populateClasspath(args, yarnConf, args.sparkConf, env, extraCp)
     env("SPARK_YARN_MODE") = "true"
     env("SPARK_YARN_STAGING_DIR") = stagingDir
     env("SPARK_USER") = UserGroupInformation.getCurrentUser().getShortUserName()
@@ -284,7 +262,7 @@ trait ClientBase extends Logging {
     distCacheMgr.setDistFilesEnv(env)
     distCacheMgr.setDistArchivesEnv(env)
 
-    getAppMasterEnv.foreach { case (key, value) =>
+    getAppMasterEnv(args.sparkConf).foreach { case (key, value) =>
       YarnSparkHadoopUtil.addToEnvironment(env, key, value, File.pathSeparator)
     }
 
@@ -309,11 +287,16 @@ trait ClientBase extends Logging {
     retval.toString
   }
 
-  def calculateAMMemory(newApp: GetNewApplicationResponse): Int
+  def getClusterResourceCapacity(newAppResponse: GetNewApplicationResponse): YarnResourceCapacity = {
+    val maxCapacity = newAppResponse.getMaximumResourceCapability
+    new YarnResourceCapacity(new YarnAppResource(maxCapacity.getMemory, maxCapacity.getVirtualCores), YarnAllocationHandler.MEMORY_OVERHEAD)
+  }
+
+  def calculateAMMemory(args: ClientArguments, newApp: GetNewApplicationResponse): Int
 
   def setupSecurityToken(amContainer: ContainerLaunchContext)
 
-  def createContainerLaunchContext(
+  def createContainerLaunchContext( args: ClientArguments,
         newApp: GetNewApplicationResponse,
         localResources: HashMap[String, LocalResource],
         env: HashMap[String, String]): ContainerLaunchContext = {
@@ -344,7 +327,7 @@ trait ClientBase extends Logging {
         logWarning(warning)
         for (proc <- Seq("driver", "executor")) {
           val key = s"spark.$proc.extraJavaOptions"
-          if (sparkConf.contains(key)) {
+          if (args.sparkConf.contains(key)) {
             throw new SparkException(s"Found both $key and SPARK_JAVA_OPTS. Use only the former.")
           }
         }
@@ -353,7 +336,7 @@ trait ClientBase extends Logging {
     }
     amContainer.setEnvironment(env)
 
-    val amMemory = calculateAMMemory(newApp)
+    val amMemory = calculateAMMemory(args,newApp)
 
     val javaOpts = ListBuffer[String]()
 
@@ -385,15 +368,15 @@ trait ClientBase extends Logging {
     // Forward the Spark configuration to the application master / executors.
     // TODO: it might be nicer to pass these as an internal environment variable rather than
     // as Java options, due to complications with string parsing of nested quotes.
-    for ((k, v) <- sparkConf.getAll) {
+    for ((k, v) <- args.sparkConf.getAll) {
       javaOpts += YarnSparkHadoopUtil.escapeForShell(s"-D$k=$v")
     }
 
     if (args.amClass == classOf[ApplicationMaster].getName) {
-      sparkConf.getOption("spark.driver.extraJavaOptions")
+      args.sparkConf.getOption("spark.driver.extraJavaOptions")
         .orElse(sys.env.get("SPARK_JAVA_OPTS"))
         .foreach(opts => javaOpts += opts)
-      sparkConf.getOption("spark.driver.libraryPath")
+      args.sparkConf.getOption("spark.driver.libraryPath")
         .foreach(p => javaOpts += s"-Djava.library.path=$p")
     }
 
@@ -421,13 +404,100 @@ trait ClientBase extends Logging {
     setupSecurityToken(amContainer)
 
     // send the acl settings into YARN to control who has access via YARN interfaces
-    val securityManager = new SecurityManager(sparkConf)
+    val securityManager = new SecurityManager(args.sparkConf)
     val acls = Map[ApplicationAccessType, String] (
       ApplicationAccessType.VIEW_APP -> securityManager.getViewAcls,
       ApplicationAccessType.MODIFY_APP -> securityManager.getModifyAcls)
     amContainer.setApplicationACLs(acls)
     amContainer
   }
+
+
+  protected val listeners = ListBuffer[YarnApplicationListener]()
+
+  def addApplicationListener(listener: YarnApplicationListener) {
+    listeners += listener
+  }
+
+
+  def getApplicationInfo(report: ApplicationReport): YarnAppInfo = {
+    import scala.collection.JavaConverters._
+    YarnAppInfo(report.getApplicationId.getId,
+      report.getUser,
+      report.getQueue,
+      report.getName,
+      report.getHost,
+      report.getRpcPort,
+      report.getYarnApplicationState.name(),
+      report.getDiagnostics,
+      report.getTrackingUrl,
+      report.getStartTime)
+
+  }
+
+  protected def notifyAppStart(report: ApplicationReport) {
+    val appInfo: YarnAppInfo = getApplicationInfo(report)
+    for (l <- listeners) {
+      //async {
+      l.onApplicationStart(appInfo.startTime, appInfo)
+      //}
+    }
+  }
+
+
+  protected def notifyAppFailed(report: ApplicationReport) {
+    val appProgress: YarnAppProgress = getAppProgress(report)
+    for (l <- listeners) {
+      //async {
+      l.onApplicationFailed(new Date().getTime, appProgress)
+      //}
+    }
+  }
+
+  protected def notifyAppKilled(report: ApplicationReport) {
+    val appProgress: YarnAppProgress = getAppProgress(report)
+    for (l <- listeners) {
+      //async {
+      l.onApplicationKilled(new Date().getTime, appProgress)
+      //}
+    }
+  }
+
+
+
+
+  protected def getResourceUsage(report: ApplicationResourceUsageReport): YarnResourceUsage = {
+
+    def getYarnAppResource(res: Resource) = YarnAppResource(res.getMemory, res.getVirtualCores)
+
+    YarnResourceUsage(report.getNumUsedContainers,
+      report.getNumReservedContainers,
+      getYarnAppResource(report.getUsedResources),
+      getYarnAppResource(report.getReservedResources),
+      getYarnAppResource(report.getNeededResources))
+  }
+
+  protected def getAppProgress(report: ApplicationReport): YarnAppProgress
+
+  protected def notifyAppProgress(report: ApplicationReport) {
+    val appProgress: YarnAppProgress = getAppProgress(report)
+    for (l <- listeners) {
+      //async {
+      l.onApplicationProgress(new Date().getTime, appProgress)
+      //}
+    }
+  }
+
+  protected def notifyAppFinished(report: ApplicationReport) {
+    val appProgress: YarnAppProgress = getAppProgress(report)
+    for (l <- listeners) {
+      //async {
+      l.onApplicationEnd(new Date().getTime, appProgress)
+      //}
+    }
+  }
+
+
 }
 
 object ClientBase extends Logging {
@@ -621,9 +691,9 @@ object ClientBase extends Logging {
 
   private def addClasspathEntry(path: String, env: HashMap[String, String]) =
     YarnSparkHadoopUtil.addToEnvironment(env, Environment.CLASSPATH.name, path,
-            File.pathSeparator)
+      File.pathSeparator)
 
-  /** 
+  /**
    * Get the list of namenodes the user may access.
    */
   private[yarn] def getNameNodesToAccess(sparkConf: SparkConf): Set[Path] = {

@@ -21,13 +21,14 @@ import java.io.File
 import java.net.URI
 
 import com.google.common.io.Files
+import org.apache.spark.deploy.yarn.YarnResourceCapacity
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapreduce.MRJobConfig
 import org.apache.hadoop.yarn.conf.YarnConfiguration
 import org.apache.hadoop.yarn.api.ApplicationConstants.Environment
 import org.apache.hadoop.yarn.api.protocolrecords.GetNewApplicationResponse
-import org.apache.hadoop.yarn.api.records.ContainerLaunchContext
+import org.apache.hadoop.yarn.api.records.{ApplicationReport, ApplicationId, ContainerLaunchContext}
 import org.apache.hadoop.yarn.conf.YarnConfiguration
 import org.mockito.Matchers._
 import org.mockito.Mockito._
@@ -119,7 +120,7 @@ class ClientBaseSuite extends FunSuite with Matchers {
 
     var tempDir = Files.createTempDir();
     try {
-      client.prepareLocalResources(tempDir.getAbsolutePath())
+      client.prepareLocalResources(args,tempDir.getAbsolutePath())
       sparkConf.getOption(ClientBase.CONF_SPARK_USER_JAR) should be (Some(USER))
 
       // The non-local path should be propagated by name only, since it will end up in the app's
@@ -248,12 +249,13 @@ class ClientBaseSuite extends FunSuite with Matchers {
       val sparkConf: SparkConf,
       val yarnConf: YarnConfiguration) extends ClientBase {
 
-    override def calculateAMMemory(newApp: GetNewApplicationResponse): Int =
+    override def calculateAMMemory(args: ClientArguments,newApp: GetNewApplicationResponse): Int =
       throw new UnsupportedOperationException()
 
     override def setupSecurityToken(amContainer: ContainerLaunchContext): Unit =
       throw new UnsupportedOperationException()
 
+    override protected def getAppProgress(report: ApplicationReport): YarnAppProgress = ???
   }
 
 }
