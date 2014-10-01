@@ -78,6 +78,8 @@ class Client( hadoopConf: Configuration, toArgs: YarnResourceCapacity => ClientA
     val newAppResponse = newApp.getNewApplicationResponse()
     val appId = newAppResponse.getApplicationId()
 
+    notifyAppInit(appId)
+
     verifyClusterResources(args,newAppResponse)
 
     // Set up resource and environment variables.
@@ -141,14 +143,19 @@ class Client( hadoopConf: Configuration, toArgs: YarnResourceCapacity => ClientA
   def getApplicationReport(appId: ApplicationId) =
     yarnClient.getApplicationReport(appId)
 
-  def stop = yarnClient.stop
+  def stop = {
+    yarnClient.stop
+  }
 
+  def killApplication(appId: ApplicationId ) = {
+    yarnClient.killApplication(appId)
+  }
 
 
   protected def getAppProgress(report: ApplicationReport): YarnAppProgress = {
 
     val appUsageReport = report.getApplicationResourceUsageReport
-    YarnAppProgress(report.getApplicationId.getId,
+    YarnAppProgress(report.getApplicationId,
       getResourceUsage(appUsageReport),
       report.getProgress)
   }

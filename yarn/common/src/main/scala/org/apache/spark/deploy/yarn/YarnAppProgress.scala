@@ -17,10 +17,12 @@
 
 package org.apache.spark.deploy.yarn
 
+import org.apache.hadoop.yarn.api.records.ApplicationId
+
 /**
  *
  * @param appId -- application Id
  * @param usage  -- Yarn Resource Usage
  * @param progress -- note: for Yarn-Alpha, no progress is reported, so the value will be always default value.
  * */
-case class YarnAppProgress(appId: Int, usage: YarnResourceUsage, progress: Float = 0)
+case class YarnAppProgress(appId: ApplicationId, usage: YarnResourceUsage, progress: Float = 0)

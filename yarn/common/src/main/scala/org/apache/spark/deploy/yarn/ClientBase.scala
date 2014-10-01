@@ -420,9 +420,17 @@ trait ClientBase extends Logging {
   }
 
 
+  protected def notifyAppInit(appId: ApplicationId) {
+    for (l <- listeners) {
+      //async {
+      l.onApplicationInit(new java.util.Date().getTime, appId)
+      //}
+    }
+  }
+
   def getApplicationInfo(report: ApplicationReport): YarnAppInfo = {
     import scala.collection.JavaConverters._
-    YarnAppInfo(report.getApplicationId.getId,
+    YarnAppInfo(report.getApplicationId,
       report.getUser,
       report.getQueue,
       report.getName,
