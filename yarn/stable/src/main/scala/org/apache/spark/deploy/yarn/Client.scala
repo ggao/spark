@@ -155,7 +155,7 @@ class Client( hadoopConf: Configuration, toArgs: YarnResourceCapacity => ClientA
   protected def getAppProgress(report: ApplicationReport): YarnAppProgress = {
 
     val appUsageReport = report.getApplicationResourceUsageReport
-    YarnAppProgress(report.getApplicationId,
+    YarnAppProgress(report.getApplicationId, report.getTrackingUrl,
       getResourceUsage(appUsageReport),
       report.getProgress)
   }
