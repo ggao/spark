@@ -28,7 +28,7 @@ import org.apache.spark.util.Utils
 /**
  * Machine learning specific RDD functions.
  */
-private[mllib]
+private[spark]
 class RDDFunctions[T: ClassTag](self: RDD[T]) {
 
   /**

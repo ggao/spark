@@ -15,9 +15,8 @@
  * limitations under the License.
  */
 
-package org.apache.spark.mllib.optimization
+package org.apache.spark.ml.optimization
 
-import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.linalg.Vector
 
@@ -25,9 +24,8 @@ import org.apache.spark.mllib.linalg.Vector
  * :: DeveloperApi ::
  * Trait for optimization problem solvers.
  */
-@DeveloperApi
+private[spark]
 trait Optimizer extends Serializable {
-
   /**
    * Solve the provided convex optimization problem.
    */

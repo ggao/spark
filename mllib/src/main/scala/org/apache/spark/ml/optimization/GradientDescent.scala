@@ -15,26 +15,24 @@
  * limitations under the License.
  */
 
-package org.apache.spark.mllib.optimization
+package org.apache.spark.ml.optimization
 
 import scala.collection.mutable.ArrayBuffer
-
-import breeze.linalg.{DenseVector => BDV}
 
 import org.apache.spark.annotation.{Experimental, DeveloperApi}
 import org.apache.spark.Logging
 import org.apache.spark.rdd.RDD
+import org.apache.spark.mllib.linalg.BLAS._
 import org.apache.spark.mllib.linalg.{Vectors, Vector}
-import org.apache.spark.mllib.rdd.RDDFunctions._
 
 /**
  * Class used to solve an optimization problem using Gradient Descent.
  * @param gradient Gradient function to be used.
- * @param updater Updater to be used to update weights after every iteration.
+ * @param regularizer Regularizer to be used for regularization.
  */
-@DeveloperApi
-class GradientDescent private[mllib] (private var gradient: Gradient, private var updater: Updater)
-  extends Optimizer with Logging {
+private[spark]
+class GradientDescent (private var gradient: Gradient,
+  private var regularizer: Regularizer) extends Optimizer with Logging {
 
   private var stepSize: Double = 1.0
   private var numIterations: Int = 100
@@ -70,14 +68,6 @@ class GradientDescent private[mllib] (private var gradient: Gradient, private va
   }
 
   /**
-   * Set the regularization parameter. Default 0.0.
-   */
-  def setRegParam(regParam: Double): this.type = {
-    this.regParam = regParam
-    this
-  }
-
-  /**
    * Set the gradient function (of the loss function of one single data example)
    * to be used for SGD.
    */
@@ -86,14 +76,11 @@ class GradientDescent private[mllib] (private var gradient: Gradient, private va
     this
   }
 
-
   /**
-   * Set the updater function to actually perform a gradient step in a given direction.
-   * The updater is responsible to perform the update from the regularization term as well,
-   * and therefore determines what kind or regularization is used, if any.
+   * Set the regularizer object to perform the regularization.
    */
-  def setUpdater(updater: Updater): this.type = {
-    this.updater = updater
+  def setRegularizer(regularizer: Regularizer): this.type = {
+    this.regularizer = regularizer
     this
   }
 
@@ -109,10 +96,9 @@ class GradientDescent private[mllib] (private var gradient: Gradient, private va
     val (weights, _) = GradientDescent.runMiniBatchSGD(
       data,
       gradient,
-      updater,
+      regularizer,
       stepSize,
       numIterations,
-      regParam,
       miniBatchFraction,
       initialWeights)
     weights
@@ -124,7 +110,7 @@ class GradientDescent private[mllib] (private var gradient: Gradient, private va
  * :: DeveloperApi ::
  * Top-level method to run gradient descent.
  */
-@DeveloperApi
+private[spark]
 object GradientDescent extends Logging {
   /**
    * Run stochastic gradient descent (SGD) in parallel using mini batches.
@@ -137,10 +123,9 @@ object GradientDescent extends Logging {
    *               the form (label, [feature values]).
    * @param gradient - Gradient object (used to compute the gradient of the loss function of
    *                   one single data example)
-   * @param updater - Updater function to actually perform a gradient step in a given direction.
+   * @param regularizer - Updater function to actually perform a gradient step in a given direction.
    * @param stepSize - initial step size for the first step
    * @param numIterations - number of iterations that SGD should be run.
-   * @param regParam - regularization parameter
    * @param miniBatchFraction - fraction of the input data set that should be used for
    *                            one iteration of SGD. Default value 1.0.
    *
@@ -151,10 +136,9 @@ object GradientDescent extends Logging {
   def runMiniBatchSGD(
       data: RDD[(Double, Vector)],
       gradient: Gradient,
-      updater: Updater,
+      regularizer: Regularizer,
       stepSize: Double,
       numIterations: Int,
-      regParam: Double,
       miniBatchFraction: Double,
       initialWeights: Vector): (Vector, Array[Double]) = {
 
@@ -165,46 +149,38 @@ object GradientDescent extends Logging {
 
     // if no data, return initial weights to avoid NaNs
     if (numExamples == 0) {
-
       logInfo("GradientDescent.runMiniBatchSGD returning initial weights, no data found")
       return (initialWeights, stochasticLossHistory.toArray)
-
     }
 
     // Initialize weights as a column vector
-    var weights = Vectors.dense(initialWeights.toArray)
+    val weights = Vectors.dense(initialWeights.toArray)
     val n = weights.size
 
-    /**
-     * For the first iteration, the regVal will be initialized as sum of weight squares
-     * if it's L2 updater; for L1 updater, the same logic is followed.
-     */
-    var regVal = updater.compute(
-      weights, Vectors.dense(new Array[Double](weights.size)), 0, 1, regParam)._2
-
     for (i <- 1 to numIterations) {
-      val bcWeights = data.context.broadcast(weights)
+      val bcW = data.context.broadcast(weights)
       // Sample a subset (fraction miniBatchFraction) of the total data
       // compute and sum up the subgradients on this subset (this is one map-reduce)
       val (gradientSum, lossSum) = data.sample(false, miniBatchFraction, 42 + i)
-        .treeAggregate((BDV.zeros[Double](n), 0.0))(
+        .aggregate((Vectors.zeros(n), 0.0))(
           seqOp = (c, v) => (c, v) match { case ((grad, loss), (label, features)) =>
-            val l = gradient.compute(features, label, bcWeights.value, Vectors.fromBreeze(grad))
+            val l = gradient.compute(
+              features, label, bcW.value, grad)
             (grad, loss + l)
           },
           combOp = (c1, c2) => (c1, c2) match { case ((grad1, loss1), (grad2, loss2)) =>
-            (grad1 += grad2, loss1 + loss2)
+            axpy(1.0, grad2, grad1)
+            (grad1, loss1 + loss2)
           })
 
       /**
-       * NOTE(Xinghao): lossSum is computed using the weights from the previous iteration
-       * and regVal is the regularization value computed in the previous iteration as well.
+       * lossSum is computed using the weights from the previous iteration, and regVal is
+       * the regularization value also computed with the weights from previous iteration.
        */
+      gradientSum.toBreeze :*= (1.0 / miniBatchSize)
+      val regVal = regularizer.compute(bcW.value, gradientSum)
       stochasticLossHistory.append(lossSum / miniBatchSize + regVal)
-      val update = updater.compute(
-        weights, Vectors.fromBreeze(gradientSum / miniBatchSize), stepSize, i, regParam)
-      weights = update._1
-      regVal = update._2
+      axpy(-stepSize / math.sqrt(i), gradientSum, bcW.value)
     }
 
     logInfo("GradientDescent.runMiniBatchSGD finished. Last 10 stochastic losses %s".format(
