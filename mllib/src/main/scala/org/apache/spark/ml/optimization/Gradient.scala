@@ -24,8 +24,8 @@ import org.apache.spark.mllib.linalg.BLAS.{axpy, dot}
  * :: DeveloperApi ::
  * Class used to compute the gradient for a loss function, given a single data point.
  */
-
-abstract  class Gradient extends Serializable {
+private[spark]
+abstract class Gradient extends Serializable {
   /**
    * Compute the gradient and loss given the features of a single data point,
    * add the gradient to a provided vector to avoid creating new objects, and return loss.
@@ -45,6 +45,7 @@ abstract  class Gradient extends Serializable {
  * Compute gradient and loss for a logistic loss function, as used in binary classification.
  * See also the documentation for the precise formulation.
  */
+private[spark]
 class LogisticGradient extends Gradient {
   override def compute(
       data: Vector,
@@ -69,6 +70,7 @@ class LogisticGradient extends Gradient {
  *              L = 1/2n ||A weights-y||^2
  * See also the documentation for the precise formulation.
  */
+private[spark]
 class LeastSquaresGradient extends Gradient {
   override def compute(
       data: Vector,
@@ -87,6 +89,7 @@ class LeastSquaresGradient extends Gradient {
  * See also the documentation for the precise formulation.
  * NOTE: This assumes that the labels are {0,1}
  */
+private[spark]
 class HingeGradient extends Gradient {
   override def compute(
       data: Vector,

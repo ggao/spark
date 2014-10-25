@@ -17,7 +17,6 @@
 
 package org.apache.spark.ml.optimization
 
-import org.apache.spark.ml.optimization.GradientDescent._
 import org.apache.spark.mllib.linalg.BLAS._
 
 import scala.collection.mutable.ArrayBuffer
@@ -26,7 +25,6 @@ import breeze.linalg.{DenseVector => BDV}
 import breeze.optimize.{CachedDiffFunction, DiffFunction}
 import breeze.optimize.{LBFGS => BreezeLBFGS, OWLQN => BreezeOWLQN}
 
-import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.linalg.{Vectors, Vector}

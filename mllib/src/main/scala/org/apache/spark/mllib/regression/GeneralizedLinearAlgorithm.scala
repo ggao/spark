@@ -109,7 +109,7 @@ abstract class GeneralizedLinearAlgorithm[M <: GeneralizedLinearModel]
   /**
    * Set if the algorithm should use feature scaling to improve the convergence during optimization.
    */
-  private[mllib] def setFeatureScaling(useFeatureScaling: Boolean): this.type = {
+  private[spark] def setFeatureScaling(useFeatureScaling: Boolean): this.type = {
     this.useFeatureScaling = useFeatureScaling
     this
   }

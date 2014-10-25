@@ -36,7 +36,6 @@ class GradientDescent (private var gradient: Gradient,
 
   private var stepSize: Double = 1.0
   private var numIterations: Int = 100
-  private var regParam: Double = 0.0
   private var miniBatchFraction: Double = 1.0
 
   /**
@@ -154,7 +153,7 @@ object GradientDescent extends Logging {
     }
 
     // Initialize weights as a column vector
-    val weights = Vectors.dense(initialWeights.toArray)
+    val weights = Vectors.dense(initialWeights.toArray.clone())
     val n = weights.size
 
     for (i <- 1 to numIterations) {
