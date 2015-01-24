@@ -23,7 +23,7 @@ import org.apache.hadoop.yarn.api.records.{ApplicationId, YarnApplicationState}
 import org.apache.hadoop.yarn.exceptions.ApplicationNotFoundException
 
 import org.apache.spark.{SparkException, Logging, SparkContext}
-import org.apache.spark.deploy.yarn.{Client, ClientArguments}
+import org.apache.spark.deploy.yarn.{YarnResourceCapacity, Client, ClientArguments}
 import org.apache.spark.scheduler.TaskSchedulerImpl
 
 private[spark] class YarnClientSchedulerBackend(
@@ -52,11 +52,15 @@ private[spark] class YarnClientSchedulerBackend(
     argsArrayBuf ++= getExtraClientArguments
 
     logDebug("ClientArguments called with: " + argsArrayBuf.mkString(" "))
-    val args = new ClientArguments(argsArrayBuf.toArray, conf)
+    //val args = new ClientArguments(argsArrayBuf.toArray, conf)
+    def toArgs : YarnResourceCapacity => ClientArguments =
+      _ => new ClientArguments(argsArrayBuf.toArray, conf)
+
+    client = new Client(conf, toArgs)
+    val (applicationId, args)= client.submitApplication()
+    appId = applicationId
     totalExpectedExecutors = args.numExecutors
-    client = new Client(args, conf)
-    appId = client.submitApplication()
-    waitForApplication()
+    waitForApplication(args)
     asyncMonitorApplication()
   }
 
@@ -104,9 +108,9 @@ private[spark] class YarnClientSchedulerBackend(
    * If the application has finished, failed or been killed in the process, throw an exception.
    * This assumes both `client` and `appId` have already been set.
    */
-  private def waitForApplication(): Unit = {
+  private def waitForApplication(args : ClientArguments ): Unit = {
     assert(client != null && appId != null, "Application has not been submitted yet!")
-    val (state, _) = client.monitorApplication(appId, returnOnRunning = true) // blocking
+    val (state, _) = client.monitorApplication(appId, args, returnOnRunning = true) // blocking
     if (state == YarnApplicationState.FINISHED ||
       state == YarnApplicationState.FAILED ||
       state == YarnApplicationState.KILLED) {

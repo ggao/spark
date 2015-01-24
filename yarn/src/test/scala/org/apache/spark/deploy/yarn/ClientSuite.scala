@@ -119,14 +119,15 @@ class ClientSuite extends FunSuite with Matchers with BeforeAndAfterAll {
     val conf = new Configuration()
     val sparkConf = new SparkConf().set(Client.CONF_SPARK_JAR, SPARK)
     val args = new ClientArguments(Array("--jar", USER, "--addJars", ADDED), sparkConf)
+    def toArgs: YarnResourceCapacity => ClientArguments = _ => args
 
-    val client = spy(new Client(args, conf, sparkConf))
+    val client = spy(new Client(conf, toArgs))
     doReturn(new Path("/")).when(client).copyFileToRemote(any(classOf[Path]),
       any(classOf[Path]), anyShort())
 
     val tempDir = Utils.createTempDir()
     try {
-      client.prepareLocalResources(tempDir.getAbsolutePath())
+      client.prepareLocalResources(args, tempDir.getAbsolutePath())
       sparkConf.getOption(Client.CONF_SPARK_USER_JAR) should be (Some(USER))
 
       // The non-local path should be propagated by name only, since it will end up in the app's
