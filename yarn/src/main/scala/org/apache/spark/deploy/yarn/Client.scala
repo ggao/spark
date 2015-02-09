@@ -554,8 +554,7 @@ class Client(val hadoopConf: Configuration,
     // Include driver-specific java options if we are launching a driver
     if (args.isClusterMode) {
       val driverOpts = sparkConf.getOption("spark.driver.extraJavaOptions")
-      sparkConf.getOption("spark.driver.extraJavaOptions")
-               .orElse(sys.env.get("SPARK_JAVA_OPTS"))
+                                .orElse(sys.env.get("SPARK_JAVA_OPTS"))
       driverOpts.foreach { opts =>
         javaOpts ++= Utils.splitCommandString(opts).map(YarnSparkHadoopUtil.escapeForShell)
       }
