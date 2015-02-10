@@ -1127,7 +1127,25 @@ object Client extends Logging {
     val appResource = new YarnAppResource(mem, vCores)
     val memoryOverhead = YarnSparkHadoopUtil.MEMORY_OVERHEAD_MIN
     new YarnResourceCapacity(appResource,memoryOverhead)
+  }
 
+  /**
+   * Whether to consider jars provided by the user to have precedence over the Spark jars when
+   * loading user classes.
+   */
+  def isUserClassPathFirst(conf: SparkConf, isDriver: Boolean): Boolean = {
+    if (isDriver) {
+      conf.getBoolean("spark.driver.userClassPathFirst", false)
+    } else {
+      conf.getBoolean("spark.executor.userClassPathFirst", false)
+    }
+  }
+
+  /**
+   * Joins all the path components using Path.SEPARATOR.
+   */
+  def buildPath(components: String*): String = {
+    components.mkString(Path.SEPARATOR)
   }
 
 }

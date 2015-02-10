@@ -855,7 +855,7 @@ Apart from these, the following properties are also available, and may be useful
   <td><code>spark.akka.heartbeat.interval</code></td>
   <td>1000</td>
   <td>
-    This is set to a larger value to disable the transport failure detector that comes built in to 
+    This is set to a larger value to disable the transport failure detector that comes built in to
     Akka. It can be enabled again, if you plan to use this feature (Not recommended). A larger 
     interval value in seconds reduces network overhead and a smaller value ( ~ 1 s) might be more 
     informative for Akka's failure detector. Tune this in combination of `spark.akka.heartbeat.pauses` 
